@@ -6,7 +6,7 @@ The `bkgco` Python package wraps two related C++ libraries:
 
 
 Three types are provided by `bkgco`:
-* `BKGraph` constructs a graph from arc weights and maximizes an $s$-$t$ maximum flow.
+* `BKGraph` constructs a graph from arc weights and maximizes an *s-t* maximum flow.
 * `BKEnergy` constructs a graph from binary energy terms and minimizes the energy.
 * `GCO` iteratively minimizes a multi-label energy, using a graph-cut at each iteration.
 
@@ -32,7 +32,7 @@ with BKGraph() as g:
     flow = g.maxflow()       # 3
     segs = g.get_segments()  # array([0, 1, 1], dtype=uint8)
 ```
-The above code builds the $s$-$t$ flow graph below and maximizes the flow, cutting off node 0 (leftmost) from the sink (t).
+The above code builds the *s-t* flow graph below and maximizes the flow, cutting off node 0 (leftmost) from the sink (t).
 ```
       ┌────────(s)
       │         │
@@ -48,7 +48,7 @@ The above code builds the $s$-$t$ flow graph below and maximizes the flow, cutti
 
 ### BKEnergy example
 
-The code below defines a binary energy corresponding exactly to the above s-t flow graph.
+The code below defines a binary energy corresponding exactly to the above *s-t* flow graph.
 
 ```python
 from bkgco import BKEnergy
