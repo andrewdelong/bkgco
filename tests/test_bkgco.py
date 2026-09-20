@@ -1,8 +1,11 @@
+import _thread
 import itertools
 import os
 import re
 import signal
+import sys
 import threading
+import time
 import unittest
 import warnings
 
@@ -626,25 +629,42 @@ class TestErrors(unittest.TestCase):
 
 
 class TestInterrupt(unittest.TestCase):
-    def test_ctrl_c_during_expansion(self):
+    def _interrupt_mid_expansion(self, trigger):
+        """Fire `trigger` from a timer thread during a long expansion; the object
+        must raise KeyboardInterrupt and stay usable and resumable."""
         rng = np.random.default_rng(9)
         n, k = 300, 8
         D = rng.integers(0, 100, size=(n * n, k)).astype(np.int32)
         V = (4 * (1 - np.eye(k))).astype(np.int32)
         with GCO.grid((n, n), k) as gc:
             gc.set_data_cost(D).set_smooth_cost(V)
-            timer = threading.Timer(0.02, lambda: os.kill(os.getpid(), signal.SIGINT))
+            timer = threading.Timer(0.02, trigger)
             timer.start()
+            interrupted = False
             try:
                 gc.expansion()
-                timer.cancel()
-                self.skipTest("expansion finished before the interrupt arrived")
             except KeyboardInterrupt:
-                pass
+                interrupted = True
             finally:
                 timer.cancel()
+            if not interrupted:
+                try:
+                    time.sleep(0.05)    # absorb an interrupt that arrived a moment late
+                except KeyboardInterrupt:
+                    pass
+                self.skipTest("expansion finished before the interrupt arrived")
             self.assertEqual(gc.get_labeling().shape, (n * n,))  # still usable
             self.assertGreater(gc.expansion(1), 0)  # and resumable
+
+    def test_ctrl_c_during_expansion(self):
+        # _thread.interrupt_main() sets the same pending-SIGINT flag that a console
+        # Ctrl-C does, and works everywhere -- on Windows os.kill() cannot deliver
+        # SIGINT, it calls TerminateProcess() instead.
+        self._interrupt_mid_expansion(_thread.interrupt_main)
+
+    @unittest.skipIf(sys.platform == "win32", "os.kill() cannot deliver SIGINT on Windows")
+    def test_real_sigint_during_expansion(self):
+        self._interrupt_mid_expansion(lambda: os.kill(os.getpid(), signal.SIGINT))
 
 
 def bk_brute_force(nvars, unary, pairs, triples, const=0):

@@ -31,7 +31,7 @@ jobs:
 
   macos:
     macos:
-      xcode: 16.2.0
+      xcode: 26.4.1
     steps:
       - checkout
       - run:
