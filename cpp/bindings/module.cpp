@@ -9,22 +9,8 @@
 #include <type_traits>
 #include <vector>
 
-#if PY_VERSION_HEX < 0x030C0000
-#include <structmember.h>
-#define Py_T_INT T_INT
-#define Py_READONLY READONLY
-#endif
-#if PY_VERSION_HEX < 0x030A0000
-#define Py_NewRef(o) (Py_INCREF(o), (PyObject*)(o))
-static int PyModule_AddObjectRef(PyObject* m, const char* name, PyObject* o)
-{
-	Py_INCREF(o);
-	if (PyModule_AddObject(m, name, o) < 0) {
-		Py_DECREF(o);
-		return -1;
-	}
-	return 0;
-}
+#if PY_VERSION_HEX < 0x030D0000
+#error Requires Python 3.13 or later.
 #endif
 
 extern "C" bool gco_py_interrupt();
@@ -1633,12 +1619,8 @@ static int mod_clear(PyObject* m)
 
 static PyModuleDef_Slot mod_slots[] = {
 	{Py_mod_exec, (void*)mod_exec},
-#if PY_VERSION_HEX >= 0x030C0000
 	{Py_mod_multiple_interpreters, Py_MOD_MULTIPLE_INTERPRETERS_NOT_SUPPORTED},
-#endif
-#if defined(Py_mod_gil)
 	{Py_mod_gil, Py_MOD_GIL_NOT_USED},
-#endif
 	{0, NULL}
 };
 

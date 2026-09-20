@@ -102,10 +102,9 @@ with GCO(num_sites=4, num_labels=3) as g:
     l = g.get_labeling()      # array([2, 2, 0, 0], dtype=int32)
 ```
 
-
 ## Dependencies
 
-* Python >= 3.9
+* Python >= 3.13
 * Numpy >= 1.20
 
 ## Building
@@ -140,8 +139,7 @@ Usage:
 
 Technical:
 - **Array sharing.** GCO's data and smooth cost arrays are passed to C++ by reference (no copy).
-  Changes to the `D` and `V` arrays are seen immediately, but call `set_data_cost(D)` and `set_smooth_cost(V)` again (cheap) to invalidate
-  cached energy values.
+  Changes to the `D` and `V` arrays are seen immediately, but call `set_data_cost(D)` and `set_smooth_cost(V)` again (cheap) to invalidate cached energy values.
 - **Threads.** The GIL is released so that independent `GCO` objects run in parallel;
   calls on one object are serialized by a per-object mutex. The module declares `Py_MOD_GIL_NOT_USED`,
   so it works on free-threaded CPython without re-enabling the GIL.
@@ -153,6 +151,6 @@ Technical:
 
 Usage of this wrapper is governed by the terms in `cpp/gco/GCO_README.TXT`.
 
-## Use of AI
+## Acknowledgements
 
-This wrapper was almost entirely implemented by Claude Code, under the prompting of Andrew Delong.
+This wrapper was generated with the assistance of Claude. All credit for the maxflow and GCO libraries goes to their original developers.
