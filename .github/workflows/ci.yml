@@ -19,18 +19,23 @@ jobs:
 
     runs-on: ${{ matrix.os }}
 
-    # Guards against a non-Apple clang++ (e.g. Homebrew LLVM) landing ahead of
-    # Xcode's on PATH; harmless, and a no-op, on Linux and Windows.
-    env:
-      CC: ${{ matrix.os == 'macos-latest' && '/usr/bin/clang' || '' }}
-      CXX: ${{ matrix.os == 'macos-latest' && '/usr/bin/clang++' || '' }}
-
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+
+      # Guards against a non-Apple clang++ (e.g. Homebrew LLVM) landing ahead of
+      # Xcode's on PATH. A step, not a job-level `env:`, because setting CC/CXX to
+      # "" on the other platforms (rather than leaving them unset) breaks distutils:
+      # it does CC.split() to find the compiler, so CC="" makes the first compile
+      # flag land in argv[0], which the OS then tries to execute as a path.
+      - name: Pin CC/CXX to Apple clang
+        if: runner.os == 'macOS'
+        run: |
+          echo "CC=/usr/bin/clang" >> "$GITHUB_ENV"
+          echo "CXX=/usr/bin/clang++" >> "$GITHUB_ENV"
 
       - name: Install build dependencies
         run: python -m pip install --upgrade pip setuptools numpy
