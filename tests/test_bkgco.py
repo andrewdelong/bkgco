@@ -264,10 +264,35 @@ class TestLabelCosts(unittest.TestCase):
             gc.set_label_cost(np.array([1, 2, 3], np.int32))
             gc.set_labeling([0, 2])
             self.assertEqual(gc.label_energy(), 4)
-            gc.set_label_cost(7, labels=[1, 2])
+            gc.set_label_subset_cost([1, 2], 7)
             self.assertEqual(gc.label_energy(), 4 + 7)
             gc.set_labeling([0, 0])
             self.assertEqual(gc.label_energy(), 1)
+
+    def test_set_label_cost_equivalences(self):
+        """set_label_cost is documented as sugar over per-label set_label_subset_cost
+        calls; check that equivalence actually holds, not just that each form works."""
+        D = np.zeros((2, 4), np.int32)
+        V = np.zeros((4, 4), np.int32)
+        labeling = [0, 3]
+
+        def energy_with(build):
+            with GCO(2, 4) as gc:
+                gc.set_data_cost(D).set_smooth_cost(V)
+                build(gc)
+                gc.set_labeling(labeling)
+                return gc.label_energy()
+
+        uniform = energy_with(lambda gc: gc.set_label_cost(5))
+        via_subsets = energy_with(lambda gc: [gc.set_label_subset_cost([l], 5) for l in range(4)])
+        self.assertEqual(uniform, via_subsets)
+
+        costs = [2, 3, 5, 7]
+        per_label = energy_with(lambda gc: gc.set_label_cost(costs))
+        via_subsets = energy_with(
+            lambda gc: [gc.set_label_subset_cost([l], costs[l]) for l in range(4)]
+        )
+        self.assertEqual(per_label, via_subsets)
 
 
 class TestSparseDataCost(unittest.TestCase):

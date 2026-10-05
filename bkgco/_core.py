@@ -56,7 +56,11 @@ def _conv(a: npt.ArrayLike, dtype: np.dtype[Any] | None, what: str) -> npt.NDArr
 class GCO:
     """Multi-label energy minimization by graph cuts (alpha-expansion, alpha-beta-swap).
 
-    E(l) = sum_p D_p(l_p) + sum_pq w_pq V(l_p,l_q) + sum_L' h_L'(l)
+    E(l) = data_cost(l) + smooth_cost(l) + label_cost(l)
+
+    The detailed expression for each type of cost can be found in the papers
+    "Fast approximate energy minimization via graph cuts" and
+    "Fast approximate energy minimization with label costs".
 
     Sites and labels use 0-based indices. Cost arrays are held by reference (not
     copied) when they are already C-contiguous and of the object's dtype.
@@ -207,16 +211,21 @@ class GCO:
         self._h.set_neighbors(i, j, w)
         return self
 
-    def set_label_cost(self, cost: float | npt.ArrayLike, labels: npt.ArrayLike | None = None) -> GCO:
-        """Cost added once if a label (or any label of `labels`) is used at all."""
-        if labels is not None:
-            l = _conv(labels, _IDX, "label subset").ravel()
-            self._h.set_label_subset_cost(l, float(cost))  # type: ignore[arg-type]  # scalar by convention when labels= is given
-        elif np.ndim(cost) == 0:
+    def set_label_cost(self, cost: int | float | npt.ArrayLike) -> GCO:
+        """Cost for using each individual label in the solution. If `cost` is scalar, all labels have
+        the same individual cost. If `cost` is an array, each label gets its own individual cost."""
+        if np.ndim(cost) == 0:
             self._h.set_label_cost(float(cost))  # type: ignore[arg-type]  # ndim==0 => scalar-like
         else:
             c = self._cost(cost, "label cost").ravel()
             self._h.set_label_cost_array(c)
+        return self
+
+    def set_label_subset_cost(self, label_subset: npt.ArrayLike, cost: int | float) -> GCO:
+        """Cost for using any label in `label_subset`. The cost is paid once, and then
+        using additional labels from the subset does not incur additional cost."""
+        l = _conv(label_subset, _IDX, "label subset").ravel()
+        self._h.set_label_subset_cost(l, float(cost))
         return self
 
     # ---- labeling ---------------------------------------------------------
@@ -404,7 +413,7 @@ class BKEnergy:
         Every projection onto two variables must be regular."""
         return self._add_termn(variables, cost, 3)
 
-    def add_constant(self, value: float) -> BKEnergy:
+    def add_constant(self, value: int | float) -> BKEnergy:
         """Add a constant to the energy."""
         self._started().add_constant(float(value))
         return self
