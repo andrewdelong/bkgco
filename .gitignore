@@ -1,3 +1,6 @@
+# generated API docs (built by .github/workflows/docs.yml, not committed)
+site/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -31,3 +34,6 @@ venv/
 *.swp
 .DS_Store
 Thumbs.db
+
+# vscode
+*.code-workspace
