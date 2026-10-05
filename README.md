@@ -18,7 +18,7 @@ Three types are provided by `bkgco`:
 * `BKEnergy` constructs a graph from binary energy terms and minimizes the energy.
 * `GCO` iteratively minimizes a multi-label energy, using a graph-cut at each iteration.
 
-Cost terms, neighbour indices, and weights are all passed as NumPy arrays for efficiency.
+Cost terms, neighbour indices, and weights are all passed as NumPy arrays for efficiency. See the 
 
 ### BKGraph example
 
@@ -109,6 +109,10 @@ with GCO(num_sites=4, num_labels=3) as g:
     e = g.expansion()         # 9
     l = g.get_labeling()      # array([2, 2, 0, 0], dtype=int32)
 ```
+
+## Docs
+
+See the [API docs](https://andrewdelong.github.io/bkgco/).
 
 ## Dependencies
 
