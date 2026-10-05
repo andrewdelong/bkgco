@@ -1,0 +1,93 @@
+name: Publish to PyPI
+
+# Builds the sdist and wheels (cp310-cp313, plus the free-threaded cp313t/cp314t
+# builds our test matrix covers) and uploads them to PyPI via Trusted Publishing --
+# but ONLY when a GitHub Release is published. workflow_dispatch exists purely to
+# dry-run the build matrix (inspect the produced artifacts) before ever cutting a
+# real release; the `publish` job itself is gated to the `release` event only, so
+# a manual run never uploads anything, and neither does a plain push or tag push.
+#
+# One-time setup this workflow depends on (not done by CI, see README/PR description):
+#   1. On pypi.org -> your account -> Publishing: add a "pending" trusted publisher
+#      for a project named "bkgco" (works even though the project doesn't exist on
+#      PyPI yet): owner=<github org/user>, repo=bkgco, workflow=publish.yml,
+#      environment=pypi. The project is created automatically on first publish.
+#   2. In this repo's Settings -> Environments: create an environment named "pypi".
+#      Optionally add required reviewers there for a manual approval gate between
+#      "Release published" and "artifacts actually uploaded".
+# Nothing above needs a PyPI API token -- Trusted Publishing exchanges a short-lived
+# GitHub OIDC token for a scoped upload credential at publish time instead.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install --upgrade pip build
+      - run: python -m build --sdist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-sdist
+          path: dist/*.tar.gz
+
+  wheels:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same Homebrew-LLVM-vs-Xcode-clang hazard as ci.yml; cibuildwheel runs on
+      # the same macos-latest image.
+      - name: Pin CC/CXX to Apple clang
+        if: runner.os == 'macOS'
+        run: |
+          echo "CC=/usr/bin/clang" >> "$GITHUB_ENV"
+          echo "CXX=/usr/bin/clang++" >> "$GITHUB_ENV"
+
+      - uses: pypa/cibuildwheel@v3
+        env:
+          # Explicit allowlist, not cibuildwheel's defaults: free-threaded wheel
+          # support is still mid-transition upstream (3.13t deprecated behind
+          # `enable`, 3.14t's default-enabled status isn't consistent across
+          # cibuildwheel's own docs as of this writing) -- naming every target we
+          # mean to ship removes that ambiguity rather than inheriting it.
+          CIBW_BUILD: >-
+            cp310-* cp311-* cp312-* cp313-* cp313t-* cp314t-*
+          CIBW_SKIP: "*-win32 *-manylinux_i686 *-musllinux_i686"
+          CIBW_ENABLE: cpython-freethreading
+          CIBW_ARCHS_MACOS: "x86_64 arm64"
+          # No numpy C-API usage (Python buffer protocol only), so the build
+          # itself needs nothing beyond setuptools; numpy is only a runtime dep.
+          CIBW_TEST_REQUIRES: numpy
+          CIBW_TEST_COMMAND: "python -m unittest discover -s {project}/tests"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-wheels-${{ matrix.os }}
+          path: wheelhouse/*.whl
+
+  publish:
+    needs: [sdist, wheels]
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    environment: pypi    # must match the environment named in the trusted publisher config
+    permissions:
+      id-token: write    # required for OIDC Trusted Publishing; no API token needed
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1
