@@ -4,6 +4,14 @@ name: CI
 # Each job follows the README: build in place, then run unittest from the repo root.
 # The suite's C++ test (tests/cpp_all_types.cpp) needs a c++/g++/clang++ on PATH,
 # which setup-python's runners all provide; it skips itself if none is found.
+#
+# The "t" versions (e.g. "3.13t") are free-threaded (PEP 703, no-GIL) builds --
+# actions/setup-python resolves the suffix to the free-threaded artifact on every
+# OS. The extension declares Py_mod_gil=Py_MOD_GIL_NOT_USED and has had a real,
+# free-threading-only crash before (concurrent close() vs. in-flight call racing
+# on the same object's backend pointer: safe-by-accident under the GIL's
+# scheduling, a reliable segfault without it), so these are load-bearing, not
+# just-in-case, jobs.
 
 on:
   push:
@@ -16,6 +24,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.13t", "3.14t"]
 
     runs-on: ${{ matrix.os }}
 
@@ -24,7 +33,15 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: ${{ matrix.python-version }}
+
+      # Fail loudly, not silently, if a "t" job ever ends up on a GIL-enabled
+      # interpreter (e.g. a manifest regression) -- the whole point of these
+      # jobs is exercising the no-GIL path.
+      - name: Verify free-threaded build is active
+        if: endsWith(matrix.python-version, 't')
+        run: >
+          python -c "import sys; assert not sys._is_gil_enabled(), 'expected a free-threaded build, but the GIL is enabled'; print('confirmed: GIL disabled')"
 
       # Guards against a non-Apple clang++ (e.g. Homebrew LLVM) landing ahead of
       # Xcode's on PATH. A step, not a job-level `env:`, because setting CC/CXX to

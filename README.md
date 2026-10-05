@@ -1,6 +1,12 @@
 # bkgco — Python wrapper for the BK and GCO optimization libraries
 
-[![CircleCI](https://dl.circleci.com/status-badge/img/gh/andrewdelong/bkgco/tree/main.svg?style=shield)](https://dl.circleci.com/status-badge/redirect/gh/andrewdelong/bkgco/tree/main)
+[![CI](https://github.com/andrewdelong/bkgco/actions/workflows/ci.yml/badge.svg)](https://github.com/andrewdelong/bkgco/actions/workflows/ci.yml)
+![Windows](https://img.shields.io/badge/Windows-supported-blue?logo=windows)
+![macOS](https://img.shields.io/badge/macOS-supported-blue?logo=apple)
+![Linux](https://img.shields.io/badge/Linux-supported-blue?logo=linux)
+[![Conda Version](https://img.shields.io/conda/vn/conda-forge/bkgco.svg)](https://anaconda.org/conda-forge/bkgco)
+[![PyPI Version](https://img.shields.io/pypi/v/bkgco.svg)](https://pypi.org/project/bkgco/)
+
 
 The `bkgco` Python package wraps two related C++ libraries:
 * `maxflow`: the Boykov-Kolmogorov (BK) algorithm for graph-cuts, and
@@ -106,7 +112,7 @@ with GCO(num_sites=4, num_labels=3) as g:
 
 ## Dependencies
 
-* Python >= 3.13
+* Python >= 3.10
 * Numpy >= 1.20
 
 ## Building
@@ -155,4 +161,5 @@ Usage of this wrapper is governed by the terms in `cpp/gco/GCO_README.TXT`.
 
 ## Acknowledgements
 
-This wrapper was generated with the assistance of Claude. All credit for the maxflow and GCO libraries goes to their original developers.
+This wrapper was generated mostly by Claude Code under the guidance of a human with expertise on the
+underlying software. All credit for the maxflow and GCO libraries goes to their original developers.

@@ -1067,6 +1067,71 @@ class TestThreading(unittest.TestCase):
             [t.join() for t in threads]
             self.assertEqual(len(set(energies)), 1)
 
+    def _race_close_against(self, make_obj, call_name, call_args, trials):
+        """Hammer close()-vs-in-flight-call on the same object from two threads,
+        synchronized with a Barrier so the race is actually contested each trial
+        (an unsynchronized thread.start() rarely lands in the narrow window).
+
+        close() and the method both validate the backend pointer only after
+        acquiring the per-object mutex; without that, a free-threaded build can
+        have the method dereference a pointer close() just freed, a reliably
+        reproducible segfault that a GIL build's thread-switch timing happens to
+        make very unlikely to land. This must never crash, and if the race is
+        actually won by close(), the call must raise RuntimeError, not anything
+        else (and never silently succeed on a destroyed object).
+        """
+        seen = {"runtime_error": 0, "other": []}
+        for _ in range(trials):
+            obj = make_obj()
+            barrier = threading.Barrier(2)
+
+            def closer():
+                barrier.wait()
+                obj.close()
+
+            def user():
+                barrier.wait()
+                try:
+                    getattr(obj, call_name)(*call_args)
+                except RuntimeError:
+                    seen["runtime_error"] += 1
+                except Exception as e:
+                    seen["other"].append(e)
+
+            t1 = threading.Thread(target=closer)
+            t2 = threading.Thread(target=user)
+            t1.start()
+            t2.start()
+            t1.join()
+            t2.join()
+        self.assertEqual(seen["other"], [])
+        return seen["runtime_error"]
+
+    def test_close_during_concurrent_gco_call_does_not_crash(self):
+        def make():
+            gc = GCO(50, 2)
+            gc.set_data_cost(np.zeros((50, 2), np.int32))
+            gc.set_smooth_cost(np.zeros((2, 2), np.int32))
+            return gc
+
+        self._race_close_against(make, "expansion", (1,), trials=4000)
+
+    def test_close_during_concurrent_bkenergy_call_does_not_crash(self):
+        def make():
+            e = bkgco.BKEnergy()
+            e.add_term1([[0, 1], [0, 1], [0, 1]])
+            return e
+
+        self._race_close_against(make, "minimize", (), trials=2000)
+
+    def test_close_during_concurrent_bkgraph_call_does_not_crash(self):
+        def make():
+            g = bkgco.BKGraph()
+            g.add_tweights([[1, 1], [1, 1], [1, 1]])
+            return g
+
+        self._race_close_against(make, "maxflow", (), trials=2000)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

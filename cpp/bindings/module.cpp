@@ -9,8 +9,13 @@
 #include <type_traits>
 #include <vector>
 
-#if PY_VERSION_HEX < 0x030D0000
-#error Requires Python 3.13 or later.
+#if PY_VERSION_HEX < 0x030A0000
+#error Requires Python 3.10 or later.
+#endif
+#if PY_VERSION_HEX < 0x030C0000     // Py_T_INT / Py_READONLY arrived in 3.12
+#include <structmember.h>
+#define Py_T_INT T_INT
+#define Py_READONLY READONLY
 #endif
 
 extern "C" bool gco_py_interrupt();
@@ -34,8 +39,32 @@ extern "C" bool gco_py_interrupt()
 }
 
 // Releases the GIL, then takes the per-object lock; reverse on scope exit.
+//
+// The 3-argument constructor additionally re-validates, once the lock is held,
+// that the backend pointer is still live. Every method's "fast path" open check
+// (check_open() and friends) reads that pointer WITHOUT the lock, as a cheap hint
+// for the common sequential case -- it gives no guarantee once another thread can
+// run concurrently. Another thread's destroy()/close() may complete, under the
+// same mutex, in the gap between that unlocked read and this lock acquisition;
+// without re-checking here, the dereference right after construction would be a
+// freed-pointer use. (On a GIL build this gap is vanishingly narrow because the
+// calling thread holds the GIL continuously up to the lock attempt; free-threaded
+// Python removes that incidental protection, so this is required there.)
 struct Unlocked {
 	Unlocked(std::mutex* m): m_save(PyEval_SaveThread()), m_mu(m) { m_mu->lock(); }
+
+	template <typename T>
+	Unlocked(std::mutex* m, T* const* live, const char* destroyedMsg)
+	: m_save(PyEval_SaveThread()), m_mu(m)
+	{
+		m_mu->lock();
+		if (!*live) {
+			m_mu->unlock();
+			PyEval_RestoreThread(m_save);
+			throw GCException(destroyedMsg);
+		}
+	}
+
 	~Unlocked() { m_mu->unlock(); PyEval_RestoreThread(m_save); }
 private:
 	PyThreadState* m_save;
@@ -266,7 +295,7 @@ static PyObject* m_set_data_cost(GCOObj* self, PyObject* arg)
 	           (Py_ssize_t)self->ns * self->nl, "data cost") < 0)
 		return NULL;
 	try {
-		Unlocked u(self->mu);
+		Unlocked u(self->mu, &self->b, "GCO object has been destroyed");
 		self->b->setDataCost(b.buf);
 	} catch (GCException& x) {
 		PyBuffer_Release(&b);
@@ -303,7 +332,7 @@ static PyObject* m_set_data_cost_sparse(GCOObj* self, PyObject* args)
 	}
 	PyObject* res = NULL;
 	try {
-		Unlocked u(self->mu);
+		Unlocked u(self->mu, &self->b, "GCO object has been destroyed");
 		self->b->setDataCostSparse(label, (const int*)sb.buf, cb.buf, n);
 		res = Py_None;
 	} catch (GCException& x) {
@@ -327,7 +356,7 @@ static PyObject* m_set_smooth_cost(GCOObj* self, PyObject* arg)
 	           (Py_ssize_t)self->nl * self->nl, "smooth cost") < 0)
 		return NULL;
 	try {
-		Unlocked u(self->mu);
+		Unlocked u(self->mu, &self->b, "GCO object has been destroyed");
 		self->b->setSmoothCost(b.buf);
 	} catch (GCException& x) {
 		PyBuffer_Release(&b);
@@ -369,7 +398,7 @@ static PyObject* m_set_smooth_cost_vh(GCOObj* self, PyObject* args)
 	}
 	int ok = 0;
 	try {
-		Unlocked u(self->mu);
+		Unlocked u(self->mu, &self->b, "GCO object has been destroyed");
 		self->b->setSmoothCostVH(vb.buf, vcb.buf, hcb.buf);
 		ok = 1;
 	} catch (GCException& x) {
@@ -431,7 +460,7 @@ static PyObject* m_set_neighbors(GCOObj* self, PyObject* args)
 		}
 	}
 	try {
-		Unlocked u(self->mu);
+		Unlocked u(self->mu, &self->b, "GCO object has been destroyed");
 		self->b->setNeighbors(s1, s2, have_w ? wb.buf : NULL, n);
 		res = Py_None;
 	} catch (GCException& x) {
@@ -457,7 +486,7 @@ static PyObject* m_set_label_cost(GCOObj* self, PyObject* arg)
 	if (term_from_py(self, arg, &c) < 0)
 		return NULL;
 	try {
-		Unlocked u(self->mu);
+		Unlocked u(self->mu, &self->b, "GCO object has been destroyed");
 		self->b->setLabelCost(c);
 	}
 	GCO_CATCH
@@ -473,7 +502,7 @@ static PyObject* m_set_label_cost_array(GCOObj* self, PyObject* arg)
 		return NULL;
 	PyObject* res = NULL;
 	try {
-		Unlocked u(self->mu);
+		Unlocked u(self->mu, &self->b, "GCO object has been destroyed");
 		self->b->setLabelCostArray(b.buf);  // copied internally
 		res = Py_None;
 	} catch (GCException& x) {
@@ -505,7 +534,7 @@ static PyObject* m_set_label_subset_cost(GCOObj* self, PyObject* args)
 		PyErr_SetString(PyExc_ValueError, "label subset must be non-empty");
 	} else {
 		try {
-			Unlocked u(self->mu);
+			Unlocked u(self->mu, &self->b, "GCO object has been destroyed");
 			self->b->setLabelSubsetCost((const int*)b.buf, (int)n, c);  // copied internally
 			res = Py_None;
 		} catch (GCException& x) {
@@ -533,9 +562,15 @@ static PyObject* m_set_labeling(GCOObj* self, PyObject* arg)
 			return NULL;
 		}
 	}
-	{
-		Unlocked u(self->mu);
+	try {
+		Unlocked u(self->mu, &self->b, "GCO object has been destroyed");
 		self->b->setLabeling(l, self->ns);
+	} catch (GCException& x) {
+		PyBuffer_Release(&b);
+		return raise_gc(x.message);
+	} catch (...) {
+		PyBuffer_Release(&b);
+		return raise_gc("unknown error inside GCoptimization");
 	}
 	PyBuffer_Release(&b);
 	Py_RETURN_NONE;
@@ -558,9 +593,15 @@ static PyObject* m_get_labeling(GCOObj* self, PyObject* args)
 		PyErr_SetString(PyExc_ValueError, "requested site range is out of bounds");
 		return NULL;
 	}
-	{
-		Unlocked u(self->mu);
+	try {
+		Unlocked u(self->mu, &self->b, "GCO object has been destroyed");
 		self->b->getLabeling(start, (int)n, (int*)b.buf);
+	} catch (GCException& x) {
+		PyBuffer_Release(&b);
+		return raise_gc(x.message);
+	} catch (...) {
+		PyBuffer_Release(&b);
+		return raise_gc("unknown error inside GCoptimization");
 	}
 	PyBuffer_Release(&b);
 	Py_RETURN_NONE;
@@ -573,8 +614,11 @@ static PyObject* m_set_label_order_random(GCOObj* self, PyObject* arg)
 	int is_random = PyObject_IsTrue(arg);
 	if (is_random < 0)
 		return NULL;
-	Unlocked u(self->mu);
-	self->b->setLabelOrderRandom(is_random != 0);
+	try {
+		Unlocked u(self->mu, &self->b, "GCO object has been destroyed");
+		self->b->setLabelOrderRandom(is_random != 0);
+	}
+	GCO_CATCH
 	Py_RETURN_NONE;
 }
 
@@ -591,7 +635,7 @@ static PyObject* m_set_label_order(GCOObj* self, PyObject* arg)
 		PyErr_SetString(PyExc_ValueError, "label order has more entries than labels");
 	} else {
 		try {
-			Unlocked u(self->mu);
+			Unlocked u(self->mu, &self->b, "GCO object has been destroyed");
 			self->b->setLabelOrder((const int*)b.buf, (int)n);
 			res = Py_None;
 		} catch (GCException& x) {
@@ -615,7 +659,11 @@ static PyObject* m_set_verbosity(GCOObj* self, PyObject* arg)
 		PyErr_SetString(PyExc_ValueError, "verbosity must be 0, 1 or 2");
 		return NULL;
 	}
-	self->b->setVerbosity((int)level);
+	try {
+		Unlocked u(self->mu, &self->b, "GCO object has been destroyed");
+		self->b->setVerbosity((int)level);
+	}
+	GCO_CATCH
 	Py_RETURN_NONE;
 }
 
@@ -628,7 +676,7 @@ static PyObject* m_expansion(GCOObj* self, PyObject* args)
 		return NULL;
 	EnergyVal e;
 	try {
-		Unlocked u(self->mu);
+		Unlocked u(self->mu, &self->b, "GCO object has been destroyed");
 		e = self->b->expansion(max_cycles);
 	}
 	GCO_CATCH
@@ -644,7 +692,7 @@ static PyObject* m_swap(GCOObj* self, PyObject* args)
 		return NULL;
 	EnergyVal e;
 	try {
-		Unlocked u(self->mu);
+		Unlocked u(self->mu, &self->b, "GCO object has been destroyed");
 		e = self->b->swap(max_cycles);
 	}
 	GCO_CATCH
@@ -664,7 +712,7 @@ static PyObject* m_alpha_expansion(GCOObj* self, PyObject* arg)
 	}
 	bool changed;
 	try {
-		Unlocked u(self->mu);
+		Unlocked u(self->mu, &self->b, "GCO object has been destroyed");
 		changed = self->b->alphaExpansion((int)alpha);
 	}
 	GCO_CATCH
@@ -687,7 +735,7 @@ static PyObject* m_alpha_beta_swap(GCOObj* self, PyObject* args)
 		return NULL;
 	}
 	try {
-		Unlocked u(self->mu);
+		Unlocked u(self->mu, &self->b, "GCO object has been destroyed");
 		self->b->alphaBetaSwap(alpha, beta);
 	}
 	GCO_CATCH
@@ -701,7 +749,7 @@ static PyObject* m_alpha_beta_swap(GCOObj* self, PyObject* args)
 			return NULL; \
 		EnergyVal e; \
 		try { \
-			Unlocked u(self->mu); \
+			Unlocked u(self->mu, &self->b, "GCO object has been destroyed"); \
 			e = self->b->call(); \
 		} \
 		GCO_CATCH \
@@ -1031,7 +1079,7 @@ static PyObject* bk_add_term1(BKObj* self, PyObject* arg)
 	           (Py_ssize_t)self->nvars * 2, "unary terms") < 0)
 		return NULL;
 	try {
-		Unlocked u(self->mu);
+		Unlocked u(self->mu, &self->e, "BKEnergy object has been destroyed");
 		self->e->addTerm1(b.buf, self->nvars);
 	} catch (BKError& x) {
 		PyBuffer_Release(&b);
@@ -1068,7 +1116,7 @@ static PyObject* bk_add_termN(BKObj* self, PyObject* args, int arity)
 	}
 	PyObject* res = NULL;
 	try {
-		Unlocked u(self->mu);
+		Unlocked u(self->mu, &self->e, "BKEnergy object has been destroyed");
 		if (arity == 2)
 			self->e->addTerm2((const int*)ib.buf, vb.buf, rows);
 		else
@@ -1103,7 +1151,7 @@ static PyObject* bk_add_constant(BKObj* self, PyObject* arg)
 		return NULL;
 	}
 	try {
-		Unlocked u(self->mu);
+		Unlocked u(self->mu, &self->e, "BKEnergy object has been destroyed");
 		self->e->addConstant(v);
 	}
 	BK_CATCH
@@ -1117,7 +1165,7 @@ static PyObject* bk_minimize(BKObj* self, PyObject* Py_UNUSED(a))
 	if (!self->solved) {
 		EnergyVal v;
 		try {
-			Unlocked u(self->mu);
+			Unlocked u(self->mu, &self->e, "BKEnergy object has been destroyed");
 			v = self->e->minimize();
 		}
 		BK_CATCH
@@ -1138,9 +1186,15 @@ static PyObject* bk_get_solution(BKObj* self, PyObject* arg)
 	Py_buffer b;
 	if (getbuf(arg, &b, 1, "B", 1, self->nvars, "solution output") < 0)
 		return NULL;
-	{
-		Unlocked u(self->mu);
+	try {
+		Unlocked u(self->mu, &self->e, "BKEnergy object has been destroyed");
 		self->e->getSolution((unsigned char*)b.buf, self->nvars);
+	} catch (GCException& x) {
+		PyBuffer_Release(&b);
+		return raise_gc(x.message);
+	} catch (...) {
+		PyBuffer_Release(&b);
+		return raise_gc("unknown error inside Energy");
 	}
 	PyBuffer_Release(&b);
 	Py_RETURN_NONE;
@@ -1351,7 +1405,7 @@ static PyObject* bkg_add_tweights(BKGObj* self, PyObject* arg)
 	           (Py_ssize_t)self->nnodes * 2, "terminal capacities") < 0)
 		return NULL;
 	try {
-		Unlocked u(self->mu);
+		Unlocked u(self->mu, &self->g, "BKGraph object has been destroyed");
 		self->g->addTweights(b.buf, self->nnodes);
 	} catch (BKError& x) {
 		PyBuffer_Release(&b);
@@ -1405,7 +1459,7 @@ static PyObject* bkg_add_edges(BKGObj* self, PyObject* args)
 	}
 	PyObject* res = NULL;
 	try {
-		Unlocked u(self->mu);
+		Unlocked u(self->mu, &self->g, "BKGraph object has been destroyed");
 		self->g->addEdges(idx, cb.buf, n);
 		res = Py_None;
 	} catch (BKError& x) {
@@ -1428,7 +1482,7 @@ static PyObject* bkg_maxflow(BKGObj* self, PyObject* Py_UNUSED(a))
 		return NULL;
 	EnergyVal v;
 	try {
-		Unlocked u(self->mu);
+		Unlocked u(self->mu, &self->g, "BKGraph object has been destroyed");
 		v = self->g->maxflow();
 	}
 	BK_CATCH
@@ -1455,9 +1509,15 @@ static PyObject* bkg_get_segments(BKGObj* self, PyObject* args)
 	Py_buffer b;
 	if (getbuf(out_o, &b, 1, "B", 1, self->nnodes, "segment output") < 0)
 		return NULL;
-	{
-		Unlocked u(self->mu);
+	try {
+		Unlocked u(self->mu, &self->g, "BKGraph object has been destroyed");
 		self->g->getSegments((unsigned char*)b.buf, self->nnodes, deflt);
+	} catch (GCException& x) {
+		PyBuffer_Release(&b);
+		return raise_gc(x.message);
+	} catch (...) {
+		PyBuffer_Release(&b);
+		return raise_gc("unknown error inside Graph");
 	}
 	PyBuffer_Release(&b);
 	Py_RETURN_NONE;
@@ -1619,8 +1679,12 @@ static int mod_clear(PyObject* m)
 
 static PyModuleDef_Slot mod_slots[] = {
 	{Py_mod_exec, (void*)mod_exec},
+#if PY_VERSION_HEX >= 0x030C0000
 	{Py_mod_multiple_interpreters, Py_MOD_MULTIPLE_INTERPRETERS_NOT_SUPPORTED},
+#endif
+#if defined(Py_mod_gil)     // 3.13+
 	{Py_mod_gil, Py_MOD_GIL_NOT_USED},
+#endif
 	{0, NULL}
 };
 
