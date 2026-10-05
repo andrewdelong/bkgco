@@ -1,6 +1,10 @@
+from __future__ import annotations
+
 import warnings
+from typing import Any, Literal
 
 import numpy as np
+import numpy.typing as npt
 
 from . import _bkgco
 
@@ -13,14 +17,14 @@ _COPY_WARN = 1 << 20
 _IDX = INT32
 
 
-def _check_dtype(dtype):
+def _check_dtype(dtype: npt.DTypeLike) -> np.dtype[Any]:
     d = np.dtype(dtype)
     if d not in DTYPES:
         raise TypeError("dtype must be int32, int64 or float64")
     return d
 
 
-def _infer_dtype(a):
+def _infer_dtype(a: npt.ArrayLike) -> np.dtype[Any]:
     """float64 for floating-point input, int64 for 8-byte integers, else int32."""
     d = np.asarray(a).dtype
     if d.kind in "fc":
@@ -28,17 +32,17 @@ def _infer_dtype(a):
     return INT64 if d.itemsize > 4 else INT32
 
 
-def max_energy_term(dtype):
+def max_energy_term(dtype: npt.DTypeLike) -> int | float:
     """Largest energy term the library accepts for `dtype`."""
     return _bkgco.max_energy_terms[DTYPES.index(_check_dtype(dtype))]
 
 __all__ = ["GCO", "BKEnergy", "BKGraph", "DTYPES", "MAX_ENERGY_TERM", "max_energy_term"]
 
 
-def _conv(a, dtype, what):
+def _conv(a: npt.ArrayLike, dtype: np.dtype[Any] | None, what: str) -> npt.NDArray[Any]:
     src = np.asarray(a)
     out = np.ascontiguousarray(src, dtype=dtype)
-    if out is not src and dtype.kind == "i" and not np.array_equal(out, src):
+    if dtype is not None and out is not src and dtype.kind == "i" and not np.array_equal(out, src):
         raise ValueError("%s: values are not exactly representable as %s "
                          "(use a wider dtype=)" % (what, dtype))
     if out is not src and src.size >= _COPY_WARN:
@@ -62,7 +66,16 @@ class GCO:
     float64, 8-byte integers int64, smaller integers int32 -- and is fixed from then on.
     """
 
-    def __init__(self, num_sites, num_labels, dtype=None, shape=None):
+    dtype: np.dtype[Any] | None
+    shape: tuple[int, int] | None
+
+    def __init__(
+        self,
+        num_sites: int,
+        num_labels: int,
+        dtype: npt.DTypeLike | None = None,
+        shape: tuple[int, int] | None = None,
+    ) -> None:
         self._ns = int(num_sites)
         self._nl = int(num_labels)
         self._w, self._ht = (0, 0) if shape is None else (int(shape[1]), int(shape[0]))
@@ -72,33 +85,36 @@ class GCO:
             raise ValueError("num_sites must be >= 1 and num_labels >= 2")
         if shape is not None and (self._w < 2 or self._ht < 2 or self._w * self._ht != self._ns):
             raise ValueError("grid requires width >= 2, height >= 2 and num_sites == width*height")
-        self._handle = None
+        self._handle: _bkgco.GCO | None = None
         self._closed = False
-        self._refs = {}
+        self._refs: dict[str, npt.NDArray[Any]] = {}
         self._verbosity = 0
         if self.dtype is not None:
             self._create(self.dtype)
 
     @classmethod
-    def grid(cls, shape, num_labels, dtype=None):
+    def grid(
+        cls, shape: tuple[int, int], num_labels: int, dtype: npt.DTypeLike | None = None
+    ) -> GCO:
         """4-connected grid graph over an image of `shape` == (height, width)."""
         h, w = int(shape[0]), int(shape[1])
         return cls(h * w, num_labels, dtype, shape=(h, w))
 
-    def _create(self, dtype):
+    def _create(self, dtype: np.dtype[Any]) -> None:
         self.dtype = dtype
         self._handle = _bkgco.GCO(self._ns, self._nl, DTYPES.index(dtype), self._w, self._ht)
 
     @property
-    def _h(self):
+    def _h(self) -> _bkgco.GCO:
         """The C handle; creating it fixes the dtype (int32 if nothing decided it)."""
         if self._closed:
             raise RuntimeError("GCO object has been destroyed")
         if self._handle is None:
             self._create(INT32)
+        assert self._handle is not None
         return self._handle
 
-    def _cost(self, a, what):
+    def _cost(self, a: npt.ArrayLike, what: str) -> npt.NDArray[Any]:
         """Convert a cost array, choosing the backend dtype from it if still undecided."""
         if self._handle is None and not self._closed:
             self._create(_infer_dtype(a))
@@ -106,19 +122,19 @@ class GCO:
 
     # ---- properties -------------------------------------------------------
     @property
-    def num_sites(self):
+    def num_sites(self) -> int:
         return self._ns
 
     @property
-    def num_labels(self):
+    def num_labels(self) -> int:
         return self._nl
 
     @property
-    def is_grid(self):
+    def is_grid(self) -> bool:
         return self.shape is not None
 
     # ---- costs ------------------------------------------------------------
-    def set_data_cost(self, cost):
+    def set_data_cost(self, cost: npt.ArrayLike) -> GCO:
         """Dense data costs, shape (num_sites, num_labels) or (h, w, num_labels)."""
         d = self._cost(cost, "data cost")
         if d.shape[-1] != self.num_labels or d.size != self.num_sites * self.num_labels:
@@ -130,7 +146,7 @@ class GCO:
         self._refs["dc"] = d
         return self
 
-    def set_data_cost_sparse(self, label, sites, cost):
+    def set_data_cost_sparse(self, label: int, sites: npt.ArrayLike, cost: npt.ArrayLike) -> GCO:
         """Data costs of `label` for a subset of sites; other sites become infeasible.
 
         `sites` must be sorted in increasing order. Costs are copied internally.
@@ -142,7 +158,7 @@ class GCO:
         self._h.set_data_cost_sparse(int(label), s, c)
         return self
 
-    def set_smooth_cost(self, cost):
+    def set_smooth_cost(self, cost: npt.ArrayLike) -> GCO:
         """Label compatibility V, shape (num_labels, num_labels)."""
         v = self._cost(cost, "smooth cost")
         if v.shape != (self.num_labels, self.num_labels):
@@ -151,7 +167,9 @@ class GCO:
         self._refs["sc"] = v
         return self
 
-    def set_smooth_cost_vh(self, cost, v_weights, h_weights):
+    def set_smooth_cost_vh(
+        self, cost: npt.ArrayLike, v_weights: npt.ArrayLike, h_weights: npt.ArrayLike
+    ) -> GCO:
         """Grid only: V plus per-site vertical/horizontal edge weights."""
         v = self._cost(cost, "smooth cost")
         if v.shape != (self.num_labels, self.num_labels):
@@ -162,7 +180,7 @@ class GCO:
         self._refs["sc"] = v
         return self
 
-    def set_neighbors(self, edges, weights=None):
+    def set_neighbors(self, edges: Any, weights: npt.ArrayLike | None = None) -> GCO:
         """General graph only: declare each unordered neighbor pair exactly once.
 
         `edges` may be an (E, 2) array, a tuple (sites1, sites2) of arrays, or a
@@ -189,13 +207,13 @@ class GCO:
         self._h.set_neighbors(i, j, w)
         return self
 
-    def set_label_cost(self, cost, labels=None):
-        """Cost charged once if a label (or any label of `labels`) is used at all."""
+    def set_label_cost(self, cost: float | npt.ArrayLike, labels: npt.ArrayLike | None = None) -> GCO:
+        """Cost added once if a label (or any label of `labels`) is used at all."""
         if labels is not None:
             l = _conv(labels, _IDX, "label subset").ravel()
-            self._h.set_label_subset_cost(l, float(cost))
+            self._h.set_label_subset_cost(l, float(cost))  # type: ignore[arg-type]  # scalar by convention when labels= is given
         elif np.ndim(cost) == 0:
-            self._h.set_label_cost(float(cost))
+            self._h.set_label_cost(float(cost))  # type: ignore[arg-type]  # ndim==0 => scalar-like
         else:
             c = self._cost(cost, "label cost").ravel()
             self._h.set_label_cost_array(c)
@@ -203,19 +221,19 @@ class GCO:
 
     # ---- labeling ---------------------------------------------------------
 
-    def get_labeling(self, start=0, count=None):
+    def get_labeling(self, start: int = 0, count: int | None = None) -> npt.NDArray[np.int32]:
         """The current labeling as int32, one entry per site (or a slice of it)."""
         n = self.num_sites - start if count is None else count
         out = np.empty(max(n, 0), dtype=_IDX)
         self._h.get_labeling(out, start)
         return out
 
-    def set_labeling(self, labeling):
+    def set_labeling(self, labeling: npt.ArrayLike) -> GCO:
         """Set the current labeling; one int32 label per site, in range 0..num_labels-1."""
         self._h.set_labeling(_conv(labeling, _IDX, "labeling").ravel())
         return self
 
-    def set_label_order(self, order=None, random=False):
+    def set_label_order(self, order: npt.ArrayLike | None = None, random: bool = False) -> GCO:
         """Visit labels in `order` (subsets allowed), or randomly if random=True."""
         if order is not None:
             self._h.set_label_order(_conv(order, _IDX, "label order").ravel())
@@ -224,42 +242,42 @@ class GCO:
         return self
 
     @property
-    def verbosity(self):
+    def verbosity(self) -> int:
         return self._verbosity
 
     @verbosity.setter
-    def verbosity(self, level):
+    def verbosity(self, level: int) -> None:
         self._h.set_verbosity(int(level))
         self._verbosity = int(level)
 
     # ---- optimization -----------------------------------------------------
-    def expansion(self, max_cycles=-1):
+    def expansion(self, max_cycles: int = -1) -> int | float:
         return self._h.expansion(int(max_cycles))
 
-    def alpha_expansion(self, alpha):
+    def alpha_expansion(self, alpha: int) -> bool:
         return self._h.alpha_expansion(int(alpha))
 
-    def swap(self, max_cycles=-1):
+    def swap(self, max_cycles: int = -1) -> int | float:
         return self._h.swap(int(max_cycles))
 
-    def alpha_beta_swap(self, alpha, beta):
+    def alpha_beta_swap(self, alpha: int, beta: int) -> GCO:
         self._h.alpha_beta_swap(int(alpha), int(beta))
         return self
 
-    def compute_energy(self):
+    def compute_energy(self) -> int | float:
         return self._h.compute_energy()
 
-    def data_energy(self):
+    def data_energy(self) -> int | float:
         return self._h.data_energy()
 
-    def smooth_energy(self):
+    def smooth_energy(self) -> int | float:
         return self._h.smooth_energy()
 
-    def label_energy(self):
+    def label_energy(self) -> int | float:
         return self._h.label_energy()
 
     # ---- lifetime ---------------------------------------------------------
-    def close(self):
+    def close(self) -> None:
         """Free the C++ object and drop the references to the cost arrays.
 
         Optional: this happens on its own once the last reference to this object
@@ -274,14 +292,14 @@ class GCO:
 
     destroy = close
 
-    def __enter__(self):
+    def __enter__(self) -> GCO:
         return self
 
-    def __exit__(self, *exc):
+    def __exit__(self, *exc: object) -> Literal[False]:
         self.close()
         return False
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         kind = "grid%s" % (self.shape,) if self.shape else "general"
         return "<GCO %s num_sites=%d num_labels=%d dtype=%s>" % (
             kind,
@@ -313,21 +331,23 @@ class BKEnergy:
     internally, which are not visible here.
     """
 
-    def __init__(self, dtype=None):
+    dtype: np.dtype[Any] | None
+
+    def __init__(self, dtype: npt.DTypeLike | None = None) -> None:
         self.dtype = None if dtype is None else _check_dtype(dtype)
-        self._h = None
+        self._h: _bkgco.BKEnergy | None = None
         self._nvars = 0
         self._closed = False
 
     @property
-    def num_vars(self):
+    def num_vars(self) -> int:
         return self._nvars
 
     @property
-    def minimized(self):
+    def minimized(self) -> bool:
         return bool(self._h.solved) if self._h is not None else False
 
-    def _rows(self, a, cols, what):
+    def _rows(self, a: npt.ArrayLike, cols: int, what: str) -> npt.NDArray[Any]:
         arr = np.asarray(a)
         if arr.ndim == 1 and arr.size == cols:
             arr = arr.reshape(1, cols)
@@ -335,14 +355,14 @@ class BKEnergy:
             raise ValueError("%s: expected shape (num_terms, %d)" % (what, cols))
         return arr
 
-    def _started(self):
+    def _started(self) -> _bkgco.BKEnergy:
         if self._closed:
             raise RuntimeError("BKEnergy object has been destroyed")
         if self._h is None:
             raise RuntimeError("call add_term1() first; it fixes the number of variables")
         return self._h
 
-    def add_term1(self, cost):
+    def add_term1(self, cost: npt.ArrayLike) -> BKEnergy:
         """Unary terms, shape (num_vars, 2): columns are E(0), E(1)."""
         if self._closed:
             raise RuntimeError("BKEnergy object has been destroyed")
@@ -360,7 +380,7 @@ class BKEnergy:
         self._h.add_term1(c)
         return self
 
-    def _add_termn(self, variables, cost, arity):
+    def _add_termn(self, variables: npt.ArrayLike, cost: npt.ArrayLike, arity: int) -> BKEnergy:
         h = self._started()
         what = "term%d" % arity
         v = self._rows(variables, arity, what + " variables")
@@ -373,33 +393,33 @@ class BKEnergy:
             add(_conv(v, _IDX, what + " variables"), _conv(c, self.dtype, what + " costs"))
         return self
 
-    def add_term2(self, variables, cost):
+    def add_term2(self, variables: npt.ArrayLike, cost: npt.ArrayLike) -> BKEnergy:
         """Pairwise terms: `variables` (num_terms, 2), `cost` (num_terms, 4) holding
         E00, E01, E10, E11. Each term must satisfy E00 + E11 <= E01 + E10."""
         return self._add_termn(variables, cost, 2)
 
-    def add_term3(self, variables, cost):
+    def add_term3(self, variables: npt.ArrayLike, cost: npt.ArrayLike) -> BKEnergy:
         """Triple terms: `variables` (num_terms, 3), `cost` (num_terms, 8) holding
         E000, E001, E010, E011, E100, E101, E110, E111 (last index varies fastest).
         Every projection onto two variables must be regular."""
         return self._add_termn(variables, cost, 3)
 
-    def add_constant(self, value):
+    def add_constant(self, value: float) -> BKEnergy:
         """Add a constant to the energy."""
         self._started().add_constant(float(value))
         return self
 
-    def minimize(self):
+    def minimize(self) -> int | float:
         """Minimize and return the minimum energy. Terms cannot be added afterwards."""
         return self._started().minimize()
 
-    def get_solution(self):
+    def get_solution(self) -> npt.NDArray[np.uint8]:
         """The optimal assignment as uint8, one entry per variable."""
         out = np.empty(self._nvars, dtype=np.uint8)
         self._started().get_solution(out)
         return out
 
-    def close(self):
+    def close(self) -> None:
         """Free the underlying graph.
 
         Optional: it is freed anyway once the last reference to this object goes
@@ -413,14 +433,14 @@ class BKEnergy:
 
     destroy = close
 
-    def __enter__(self):
+    def __enter__(self) -> BKEnergy:
         return self
 
-    def __exit__(self, *exc):
+    def __exit__(self, *exc: object) -> Literal[False]:
         self.close()
         return False
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return "<BKEnergy num_vars=%d dtype=%s%s>" % (
             self._nvars,
             self.dtype if self.dtype is not None else "undecided",
@@ -449,24 +469,26 @@ class BKGraph:
     residual capacities, arc iteration, reset) is not.
     """
 
-    def __init__(self, edge_capacity=0, dtype=None):
+    dtype: np.dtype[Any] | None
+
+    def __init__(self, edge_capacity: int = 0, dtype: npt.DTypeLike | None = None) -> None:
         self.edge_capacity = int(edge_capacity)
         if self.edge_capacity < 0:
             raise ValueError("edge_capacity must be >= 0")
         self.dtype = None if dtype is None else _check_dtype(dtype)
-        self._h = None
+        self._h: _bkgco.BKGraph | None = None
         self._nnodes = 0
         self._closed = False
 
     @property
-    def num_nodes(self):
+    def num_nodes(self) -> int:
         return self._nnodes
 
     @property
-    def flowed(self):
+    def flowed(self) -> bool:
         return bool(self._h.flowed) if self._h is not None else False
 
-    def _rows(self, a, cols, what):
+    def _rows(self, a: npt.ArrayLike, cols: int, what: str) -> npt.NDArray[Any]:
         arr = np.asarray(a)
         if arr.ndim == 1 and arr.size == cols:
             arr = arr.reshape(1, cols)
@@ -474,14 +496,14 @@ class BKGraph:
             raise ValueError("%s: expected shape (num_rows, %d)" % (what, cols))
         return arr
 
-    def _started(self):
+    def _started(self) -> _bkgco.BKGraph:
         if self._closed:
             raise RuntimeError("BKGraph object has been destroyed")
         if self._h is None:
             raise RuntimeError("call add_tweights() first; it fixes the number of nodes")
         return self._h
 
-    def add_tweights(self, capacities):
+    def add_tweights(self, capacities: npt.ArrayLike) -> BKGraph:
         """Terminal capacities, shape (num_nodes, 2): columns are SOURCE->i and i->SINK.
         May be negative, and may be called repeatedly (capacities accumulate)."""
         if self._closed:
@@ -500,7 +522,7 @@ class BKGraph:
         self._h.add_tweights(c)
         return self
 
-    def add_edges(self, nodes, capacities):
+    def add_edges(self, nodes: npt.ArrayLike, capacities: npt.ArrayLike) -> BKGraph:
         """Bidirectional edges: `nodes` (m, 2) int32 pairs, `capacities` (m, 2) holding
         cap(i->j) and cap(j->i). Both capacities must be non-negative."""
         h = self._started()
@@ -513,19 +535,19 @@ class BKGraph:
             h.add_edges(_conv(v, _IDX, "edge nodes"), _conv(c, self.dtype, "edge capacities"))
         return self
 
-    def maxflow(self):
+    def maxflow(self) -> int | float:
         """Compute the maximum flow and return it. May be called again after adding
         more capacities; the returned flow is always the total for the whole graph."""
         return self._started().maxflow()
 
-    def get_segments(self, default=0):
+    def get_segments(self, default: int = 0) -> npt.NDArray[np.uint8]:
         """Min-cut side of every node as uint8: 0 = SOURCE, 1 = SINK. Nodes that could
         be on either side get `default`."""
         out = np.empty(self._nnodes, dtype=np.uint8)
         self._started().get_segments(out, int(default))
         return out
 
-    def close(self):
+    def close(self) -> None:
         """Free the underlying graph.
 
         Optional: it is freed anyway once the last reference to this object goes
@@ -539,14 +561,14 @@ class BKGraph:
 
     destroy = close
 
-    def __enter__(self):
+    def __enter__(self) -> BKGraph:
         return self
 
-    def __exit__(self, *exc):
+    def __exit__(self, *exc: object) -> Literal[False]:
         self.close()
         return False
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return "<BKGraph num_nodes=%d dtype=%s%s>" % (
             self._nnodes,
             self.dtype if self.dtype is not None else "undecided",

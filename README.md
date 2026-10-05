@@ -138,6 +138,7 @@ Features:
 - **Data types.** Arc weights and energy term costs can be NumPy arrays of `dtype=int32/int64/float64`.
 - **No dynamic cuts.** The `reuse_trees` feature of `maxflow` is not yet exposed by this wrapper.
 - **Ctrl-C.** Calls to `expansion/swap` are safely keyboard-interruptible, for interactive development in notebooks.
+- **Typed.** All methods carry inline type hints for improved type checking and success rates by coding agents.
 
 Usage:
 - **Specifying a dtype.** With `dtype=None` (the default) the dtype is determined by the first cost array passed in.

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bkgco"
-version = "0.1.1"
+version = "0.1.0"
 description = "Python wrapper for the BK maxflow and GCO C++ libraries"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -38,3 +38,6 @@ Issues = "https://github.com/andrewdelong/bkgco/issues"
 
 [tool.setuptools]
 packages = ["bkgco"]
+
+[tool.setuptools.package-data]
+bkgco = ["py.typed", "_bkgco.pyi"]
