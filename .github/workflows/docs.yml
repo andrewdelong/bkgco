@@ -1,0 +1,63 @@
+name: Docs
+
+# Builds API docs from bkgco's docstrings/type hints with pdoc and publishes them
+# to GitHub Pages. Runs on every push to main, so the published docs always match
+# the default branch (not tied to releases/tags).
+#
+# pdoc works by importing the real package and introspecting live objects, so the
+# build step installs bkgco (compiling the C extension) rather than just parsing
+# source. It only needs to see the public `bkgco` namespace: `bkgco/__init__.py`'s
+# `__all__` already restricts that to GCO, BKEnergy, BKGraph, DTYPES,
+# MAX_ENERGY_TERM, max_energy_term -- pdoc hides underscore-prefixed names (_core,
+# the compiled _bkgco extension) by default, so no extra config is needed to keep
+# internals out of the published site.
+#
+# One-time setup (can't be done from CI, see README): in this repo's
+# Settings -> Pages, set "Source" to "GitHub Actions". No gh-pages branch, no
+# secrets -- actions/deploy-pages publishes directly via the Pages API.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install bkgco and pdoc
+        run: python -m pip install --upgrade pip && pip install -e . pdoc
+
+      - name: Build docs
+        run: python -m pdoc bkgco -o site/
+
+      - uses: actions/configure-pages@v6
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site/
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
