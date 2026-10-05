@@ -113,7 +113,7 @@ with GCO(num_sites=4, num_labels=3) as g:
 ## Dependencies
 
 * Python >= 3.10
-* Numpy >= 1.20
+* Numpy >= 1.21
 
 ## Building
 

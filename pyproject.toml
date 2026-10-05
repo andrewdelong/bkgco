@@ -28,8 +28,9 @@ classifiers = [
     "Topic :: Scientific/Engineering",
     "Topic :: Scientific/Engineering :: Image Recognition",
     "Topic :: Scientific/Engineering :: Mathematics",
+    "Typing :: Typed",
 ]
-dependencies = ["numpy>=1.20"]
+dependencies = ["numpy>=1.21"]  # numpy.typing.NDArray, used in our type hints, needs 1.21+
 
 [project.urls]
 Homepage = "https://github.com/andrewdelong/bkgco"
