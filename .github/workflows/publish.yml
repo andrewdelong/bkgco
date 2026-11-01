@@ -59,7 +59,7 @@ jobs:
       # cibuildwheel doesn't publish a floating major-version tag (no @v4), so
       # this is pinned to an exact release; dependabot.yml keeps it from going
       # stale silently.
-      - uses: pypa/cibuildwheel@v4.2.1
+      - uses: pypa/cibuildwheel@v4.3.5
         env:
           # Explicit allowlist, not cibuildwheel's defaults -- cp313t is deliberately
           # absent: cibuildwheel 4.0.0 dropped CPython 3.13 free-threading support
